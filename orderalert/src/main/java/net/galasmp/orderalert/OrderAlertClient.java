@@ -75,6 +75,10 @@ public final class OrderAlertClient implements ClientModInitializer {
     /** ID des im Hintergrund geoeffneten Menues, -1 = keins */
     public static int hiddenContainer = -1;
     public static long hiddenSince;
+    /** Letztes Paket fuer das versteckte Menue */
+    public static long hiddenUpdated;
+    /** Gesammelter Inhalt des versteckten Menues (oben Menue, unten 36 Slots Inventar) */
+    public static List<ItemStack> hiddenItems = new ArrayList<>();
     /** "Jetzt pruefen": diese eine Pruefung ausfuehrlich im Chat zeigen */
     public static boolean verbose;
     private static long verboseUntil;
@@ -219,10 +223,11 @@ public final class OrderAlertClient implements ClientModInitializer {
             return;
         }
 
-        // Haengengebliebenes Hintergrund-Menue nach 5 Sekunden aufgeben
-        if (hiddenContainer != -1 && now - hiddenSince > 5000L) {
-            if (mc.getConnection() != null) mc.getConnection().send(new net.minecraft.network.protocol.game.ServerboundContainerClosePacket(hiddenContainer));
-            hiddenContainer = -1;
+        // Verstecktes Menue auswerten, sobald die Orders nachgeladen sind:
+        // 0,8 s nach dem letzten Paket (mindestens 1,5 s nach dem Oeffnen), spaetestens nach 4 s
+        if (hiddenContainer != -1) {
+            long sinceOpen = now - hiddenSince, quiet = now - hiddenUpdated;
+            if ((sinceOpen > 1500L && quiet > 800L) || sinceOpen > 4000L) finishHidden(mc);
         }
         if (verbose && now > verboseUntil) {
             verbose = false;
@@ -233,6 +238,16 @@ public final class OrderAlertClient implements ClientModInitializer {
         if (!config.backgroundCheck || mc.screen != null || mc.getConnection() == null) return;
         if (now < nextBackground || hiddenContainer != -1) return;
         requestNow(mc);
+    }
+
+    private static void finishHidden(Minecraft mc) {
+        int id = hiddenContainer;
+        hiddenContainer = -1;
+        List<ItemStack> items = hiddenItems;
+        hiddenItems = new ArrayList<>();
+        int top = Math.max(0, items.size() - 36);
+        scan(mc, new ArrayList<>(items.subList(0, top)));
+        if (mc.getConnection() != null) mc.getConnection().send(new net.minecraft.network.protocol.game.ServerboundContainerClosePacket(id));
     }
 
     /** /order im Hintergrund schicken. */
@@ -293,6 +308,7 @@ public final class OrderAlertClient implements ClientModInitializer {
             String name = st.getHoverName().getString();
             String id = BuiltInRegistries.ITEM.getKey(st.getItem()).getPath();
             List<String> lore = lore(st);
+            if (!isOrder(lore)) continue;   // Knoepfe usw. ueberspringen
             double price = findPrice(lore);
             if (price < 0) continue;
             orders++;
@@ -325,6 +341,15 @@ public final class OrderAlertClient implements ClientModInitializer {
             }
         }
         if (v) say(mc, "\u00a7f" + orders + " Orders erkannt, \u00a7a" + hits + " \u00a7fpassen zu deinen Alarmen.");
+    }
+
+    /** Eine Order hat eine Zeile "Preis pro Stueck" (HugoSMP). */
+    private static boolean isOrder(List<String> lore) {
+        for (String l : lore) {
+            String x = l.toLowerCase(Locale.ROOT);
+            if (x.contains("preis pro") || x.contains("price per")) return true;
+        }
+        return false;
     }
 
     /** Der Item-Name steht bei HugoSMP in der Zeile vor "Preis pro Stueck". */
