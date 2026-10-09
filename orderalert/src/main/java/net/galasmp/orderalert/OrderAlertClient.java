@@ -40,11 +40,17 @@ import java.util.regex.Pattern;
 public final class OrderAlertClient implements ClientModInitializer {
 
     public static final class Rule {
+        /** Anzeigename, z.B. "Wurftrank des Schleimens" */
         public String item;
+        /** Item-ID, z.B. "minecraft:diamond" (leer bei per Befehl angelegten Regeln) */
+        public String id = "";
+        /** true = Item ohne Varianten (dann reicht die ID, auch bei anderer Sprache) */
+        public boolean plain;
         public double minPrice;
     }
 
     public static final class Config {
+        public int version = 0;
         public boolean enabled = true;
         /** Das Menue gilt als Order-Menue, wenn sein Titel eines dieser Woerter enthaelt */
         public List<String> titleContains = new ArrayList<>(List.of("order", "auftr"));
@@ -53,13 +59,13 @@ public final class OrderAlertClient implements ClientModInitializer {
         /** Auch ohne offenes Menue pruefen: /orders im Hintergrund oeffnen, lesen, schliessen */
         public boolean backgroundCheck = true;
         public int intervalSeconds = 60;
-        public String command = "orders";
+        public String command = "order";
         public List<Rule> rules = new ArrayList<>();
     }
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Pattern NUMBER = Pattern.compile("(\\d[\\d.,]*)\\s*([kKmMbBtT]?)");
-    private static Config config = new Config();
+    public static Config config = new Config();
     /** Schon gemeldete Orders -> Zeitpunkt (nach 30 Minuten wieder erlaubt) */
     private static final java.util.Map<String, Long> alerted = new java.util.HashMap<>();
     private static int tick;
@@ -83,9 +89,15 @@ public final class OrderAlertClient implements ClientModInitializer {
             // kaputte Datei: Standard nehmen
         }
         if (config.rules == null) config.rules = new ArrayList<>();
+        // Alte Einstellungen: Befehl hiess faelschlich /orders
+        if (config.version < 2) {
+            if (config.command == null || config.command.equalsIgnoreCase("orders")) config.command = "order";
+            config.version = 2;
+            save();
+        }
     }
 
-    private static void save() {
+    public static void save() {
         try {
             Files.createDirectories(file().getParent());
             Files.writeString(file(), GSON.toJson(config), StandardCharsets.UTF_8);
@@ -94,9 +106,17 @@ public final class OrderAlertClient implements ClientModInitializer {
         }
     }
 
+    private static net.minecraft.client.KeyMapping openKey;
+
     @Override
     public void onInitializeClient() {
         load();
+        openKey = net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper.registerKeyBinding(new net.minecraft.client.KeyMapping(
+                "key.orderalert.open", com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM,
+                org.lwjgl.glfw.GLFW.GLFW_KEY_J, net.minecraft.client.KeyMapping.Category.MISC));
+        ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+            while (openKey.consumeClick()) mc.setScreen(new OrderAlertScreen(mc.screen));
+        });
         ClientTickEvents.END_CLIENT_TICK.register(OrderAlertClient::onTick);
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(
                 ClientCommandManager.literal("orderalert")
@@ -135,6 +155,25 @@ public final class OrderAlertClient implements ClientModInitializer {
                                             ctx.getSource().sendFeedback(msg("§fGespeichert: §e" + r.item + " §fab §a$" + fmt(price)));
                                             return 1;
                                         }))))));
+    }
+
+    /** Neue Regel aus dem Menue: Item aus der Auswahl + Mindestpreis. */
+    public static void addRule(ItemStack stack, double minPrice) {
+        Rule r = new Rule();
+        r.item = stack.getHoverName().getString();
+        r.id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+        r.plain = stack.getComponentsPatch().isEmpty();
+        r.minPrice = minPrice;
+        config.rules.add(r);
+        save();
+        alerted.clear();
+        nextBackground = 0;   // gleich pruefen
+    }
+
+    public static void removeRule(int index) {
+        if (index >= 0 && index < config.rules.size()) config.rules.remove(index);
+        save();
+        alerted.clear();
     }
 
     private static void list(net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource src) {
@@ -218,8 +257,17 @@ public final class OrderAlertClient implements ClientModInitializer {
             }
             if (full) continue;
             String what = itemLine(lore, name);
+            String fullId = BuiltInRegistries.ITEM.getKey(st.getItem()).toString();
             for (Rule r : config.rules) {
-                if (!matches(r.item, what + " " + name + " " + String.join(" ", lore), id) || price < r.minPrice) continue;
+                if (price < r.minPrice) continue;
+                boolean hit;
+                if (r.id != null && !r.id.isEmpty()) {
+                    // Aus dem Menue: genauer Name, oder bei Items ohne Varianten die ID
+                    hit = what.equalsIgnoreCase(r.item.trim()) || (r.plain && fullId.equals(r.id));
+                } else {
+                    hit = matches(r.item, what + " " + name + " " + String.join(" ", lore), id);
+                }
+                if (!hit) continue;
                 String key = String.join("|", lore.size() > 3 ? lore.subList(0, 4) : lore) + "|" + name;
                 if (!alerted.containsKey(key)) {
                     alerted.put(key, System.currentTimeMillis());
