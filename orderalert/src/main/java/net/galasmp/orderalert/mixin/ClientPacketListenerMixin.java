@@ -25,6 +25,7 @@ public abstract class ClientPacketListenerMixin {
         if (System.currentTimeMillis() > OrderAlertClient.ownRequestUntil || mc.screen != null) return;
         OrderAlertClient.ownRequestUntil = 0;
         OrderAlertClient.hiddenContainer = packet.getContainerId();
+        OrderAlertClient.hiddenSince = System.currentTimeMillis();
         ci.cancel();
     }
 

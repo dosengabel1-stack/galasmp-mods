@@ -58,7 +58,7 @@ public final class OrderAlertClient implements ClientModInitializer {
         public List<String> priceLineContains = new ArrayList<>(List.of("preis pro", "price per", "preis", "price", "$"));
         /** Auch ohne offenes Menue pruefen: /orders im Hintergrund oeffnen, lesen, schliessen */
         public boolean backgroundCheck = true;
-        public int intervalSeconds = 60;
+        public int intervalSeconds = 15;
         public String command = "order";
         public List<Rule> rules = new ArrayList<>();
     }
@@ -74,6 +74,11 @@ public final class OrderAlertClient implements ClientModInitializer {
     public static long ownRequestUntil;
     /** ID des im Hintergrund geoeffneten Menues, -1 = keins */
     public static int hiddenContainer = -1;
+    public static long hiddenSince;
+    /** "Jetzt pruefen": diese eine Pruefung ausfuehrlich im Chat zeigen */
+    public static boolean verbose;
+    private static long verboseUntil;
+    private static boolean verboseAnswered;
 
     private static Path file() {
         return FabricLoader.getInstance().getConfigDir().resolve("orderalert.json");
@@ -92,7 +97,10 @@ public final class OrderAlertClient implements ClientModInitializer {
         // Alte Einstellungen: Befehl hiess faelschlich /orders
         if (config.version < 2) {
             if (config.command == null || config.command.equalsIgnoreCase("orders")) config.command = "order";
-            config.version = 2;
+        }
+        if (config.version < 3) {
+            config.intervalSeconds = 15;   // neuer Standard: alle 15 Sekunden
+            config.version = 3;
             save();
         }
     }
@@ -211,12 +219,41 @@ public final class OrderAlertClient implements ClientModInitializer {
             return;
         }
 
-        // 2) Hintergrund: regelmaessig /orders oeffnen lassen, aber nie, wenn ein Menue/Chat offen ist
+        // Haengengebliebenes Hintergrund-Menue nach 5 Sekunden aufgeben
+        if (hiddenContainer != -1 && now - hiddenSince > 5000L) {
+            if (mc.getConnection() != null) mc.getConnection().send(new net.minecraft.network.protocol.game.ServerboundContainerClosePacket(hiddenContainer));
+            hiddenContainer = -1;
+        }
+        if (verbose && now > verboseUntil) {
+            verbose = false;
+            if (!verboseAnswered) say(mc, "\u00a7cAuf /" + config.command + " kam kein Men\u00fc zur\u00fcck. Ist der Befehl richtig? (config/orderalert.json)");
+        }
+
+        // 2) Hintergrund: regelmaessig /order oeffnen lassen, aber nie, wenn ein Menue/Chat offen ist
         if (!config.backgroundCheck || mc.screen != null || mc.getConnection() == null) return;
         if (now < nextBackground || hiddenContainer != -1) return;
-        nextBackground = now + Math.max(15, config.intervalSeconds) * 1000L;
+        requestNow(mc);
+    }
+
+    /** /order im Hintergrund schicken. */
+    public static void requestNow(Minecraft mc) {
+        long now = System.currentTimeMillis();
+        nextBackground = now + Math.max(5, config.intervalSeconds) * 1000L;
         ownRequestUntil = now + 4000L;
-        mc.getConnection().sendCommand(config.command);
+        if (mc.getConnection() != null) mc.getConnection().sendCommand(config.command);
+    }
+
+    /** Knopf "Jetzt pruefen": eine Pruefung mit ausfuehrlicher Ausgabe. */
+    public static void testNow(Minecraft mc) {
+        verbose = true;
+        verboseAnswered = false;
+        verboseUntil = System.currentTimeMillis() + 5000L;
+        alerted.clear();
+        requestNow(mc);
+    }
+
+    private static void say(Minecraft mc, String text) {
+        if (mc.player != null) mc.player.displayClientMessage(Component.literal(text), false);
     }
 
     /** Ist das ein Order-Menue? Titel ODER mindestens ein Item mit "Preis pro". */
@@ -242,6 +279,15 @@ public final class OrderAlertClient implements ClientModInitializer {
     /** Alle Order-Items pruefen und bei Treffern melden. */
     public static void scan(Minecraft mc, List<ItemStack> items) {
         if (mc.player == null) return;
+        boolean v = verbose;
+        if (v) {
+            verboseAnswered = true;
+            verbose = false;
+            int n = 0;
+            for (ItemStack st : items) if (st != null && !st.isEmpty()) n++;
+            say(mc, "\u00a76\u00a7lOrderAlert-Test: \u00a7f" + n + " Items im Men\u00fc gelesen");
+        }
+        int orders = 0, hits = 0;
         for (ItemStack st : items) {
             if (st == null || st.isEmpty()) continue;
             String name = st.getHoverName().getString();
@@ -249,6 +295,8 @@ public final class OrderAlertClient implements ClientModInitializer {
             List<String> lore = lore(st);
             double price = findPrice(lore);
             if (price < 0) continue;
+            orders++;
+            if (v && orders <= 8) say(mc, "\u00a77- \u00a7e" + itemLine(lore, name) + " \u00a77f\u00fcr \u00a7a$" + fmt(price));
             // Schon voll geliefert? Dann uninteressant.
             boolean full = false;
             for (String line : lore) {
@@ -269,12 +317,14 @@ public final class OrderAlertClient implements ClientModInitializer {
                 }
                 if (!hit) continue;
                 String key = String.join("|", lore.size() > 3 ? lore.subList(0, 4) : lore) + "|" + name;
+                hits++;
                 if (!alerted.containsKey(key)) {
                     alerted.put(key, System.currentTimeMillis());
                     notify(mc, what, price);
                 }
             }
         }
+        if (v) say(mc, "\u00a7f" + orders + " Orders erkannt, \u00a7a" + hits + " \u00a7fpassen zu deinen Alarmen.");
     }
 
     /** Der Item-Name steht bei HugoSMP in der Zeile vor "Preis pro Stueck". */
@@ -297,8 +347,15 @@ public final class OrderAlertClient implements ClientModInitializer {
         mc.player.displayClientMessage(Component.literal(text), false);
         SystemToast.addOrUpdate(mc.getToastManager(), SystemToast.SystemToastId.PERIODIC_NOTIFICATION,
                 Component.literal("Order gefunden"), Component.literal(item + " - $" + fmt(price)));
-        mc.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.PLAYER_LEVELUP, 1.4F));
-        mc.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.NOTE_BLOCK_PLING, 2.0F));
+        playAlarm(mc);
+    }
+
+    /** Lauter Enderdrachen-Sound ueber "Master" - kommt auch, wenn andere Lautstaerken leise sind. */
+    public static void playAlarm(Minecraft mc) {
+        mc.getSoundManager().play(new SimpleSoundInstance(SoundEvents.ENDER_DRAGON_GROWL.location(),
+                net.minecraft.sounds.SoundSource.MASTER, 1.0F, 1.0F,
+                net.minecraft.client.resources.sounds.SoundInstance.createUnseededRandom(), false, 0,
+                net.minecraft.client.resources.sounds.SoundInstance.Attenuation.NONE, 0.0, 0.0, 0.0, true));
     }
 
     // ---------------------------------------------------------------- Preis lesen

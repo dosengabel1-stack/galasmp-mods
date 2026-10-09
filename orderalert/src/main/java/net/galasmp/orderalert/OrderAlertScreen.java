@@ -9,7 +9,7 @@ import net.minecraft.network.chat.Component;
 /** Hauptmenue (Taste J): Liste der Alarme, Preis eingeben, dann Item waehlen. */
 public final class OrderAlertScreen extends Screen {
 
-    private static final int ROWS = 6;
+    private static final int ROWS = 5;
     private final Screen parent;
     private EditBox priceBox;
     private String priceText = "";
@@ -48,7 +48,7 @@ public final class OrderAlertScreen extends Screen {
         }
 
         // Neuer Alarm: Preis + Item waehlen
-        int ny = top + ROWS * 22 + 30;
+        int ny = top + ROWS * 22 + 24;
         priceBox = new EditBox(this.font, cx - 150, ny, 140, 20, Component.literal("Mindestpreis"));
         priceBox.setMaxLength(20);
         priceBox.setHint(Component.literal("§7Mindestpreis, z.B. 1300"));
@@ -65,13 +65,19 @@ public final class OrderAlertScreen extends Screen {
             this.minecraft.setScreen(new ItemPickerScreen(this, price));
         }).bounds(cx - 6, ny, 156, 20).build());
 
+        this.addRenderableWidget(Button.builder(Component.literal("Jetzt pr\u00fcfen"), b -> {
+            this.minecraft.setScreen(null);   // Menue zu, sonst wartet die Pruefung
+            OrderAlertClient.testNow(this.minecraft);
+        }).bounds(cx - 150, ny + 48, 145, 20).build());
+        this.addRenderableWidget(Button.builder(Component.literal("Ton testen"), b -> OrderAlertClient.playAlarm(this.minecraft))
+                .bounds(cx + 5, ny + 48, 145, 20).build());
         this.addRenderableWidget(Button.builder(onOffLabel(), b -> {
             OrderAlertClient.config.enabled = !OrderAlertClient.config.enabled;
             OrderAlertClient.save();
             b.setMessage(onOffLabel());
-        }).bounds(cx - 150, ny + 34, 145, 20).build());
+        }).bounds(cx - 150, ny + 24, 145, 20).build());
         this.addRenderableWidget(Button.builder(Component.literal("Fertig"), b -> this.onClose())
-                .bounds(cx + 5, ny + 34, 145, 20).build());
+                .bounds(cx + 5, ny + 24, 145, 20).build());
     }
 
     private Component onOffLabel() {
@@ -89,7 +95,7 @@ public final class OrderAlertScreen extends Screen {
         int cx = this.width / 2;
         int top = 40;
         g.drawCenteredString(this.font, Component.literal("§6§lOrderAlert"), cx, 12, 0xFFFFFFFF);
-        g.drawCenteredString(this.font, Component.literal("Meldet sich bei Orders ab deinem Preis pro Stück"), cx, 24, 0xFFAAAAAA);
+        g.drawCenteredString(this.font, Component.literal(error.isEmpty() ? "Meldet sich bei Orders ab deinem Preis pro Stück" : "§c" + error), cx, 24, 0xFFAAAAAA);
         var rules = OrderAlertClient.config.rules;
         if (rules.isEmpty()) {
             g.drawCenteredString(this.font, Component.literal("Noch keine Alarme. Unten Preis eingeben und Item wählen."), cx, top + 6, 0xFF888888);
@@ -104,9 +110,6 @@ public final class OrderAlertScreen extends Screen {
             g.drawString(this.font, Component.literal("§e" + name), cx - 144, y + 6, 0xFFFFFFFF);
             String p = "ab §a$" + OrderAlertClient.fmt(r.minPrice);
             g.drawString(this.font, Component.literal(p), cx + 120 - this.font.width(Component.literal(p)), y + 6, 0xFFFFFFFF);
-        }
-        if (!error.isEmpty()) {
-            g.drawCenteredString(this.font, Component.literal("§c" + error), cx, top + ROWS * 22 + 56, 0xFFFFFFFF);
         }
     }
 }
