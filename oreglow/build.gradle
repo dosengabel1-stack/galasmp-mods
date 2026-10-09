@@ -6,8 +6,14 @@ version = '1.0.0'
 group = 'net.galasmp'
 base { archivesName = 'OreGlow' }
 
-repositories {
-    maven { url = 'https://maven.terraformersmc.com/releases/' }
+sourceSets {
+    // Mod-Menu-Schnittstellen nur zum Kompilieren (nicht in der JAR)
+    stubs {
+        compileClasspath += configurations.compileClasspath
+    }
+    main {
+        compileClasspath += stubs.output
+    }
 }
 
 dependencies {
@@ -15,7 +21,6 @@ dependencies {
     mappings loom.officialMojangMappings()
     modImplementation "net.fabricmc:fabric-loader:${loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
-    modCompileOnly "com.terraformersmc:modmenu:${modmenu_version}"
 }
 
 processResources {
