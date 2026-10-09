@@ -46,6 +46,8 @@ public final class OrderAlertClient implements ClientModInitializer {
         public String id = "";
         /** true = Item ohne Varianten (dann reicht die ID, auch bei anderer Sprache) */
         public boolean plain;
+        /** Variante, z.B. "potion:minecraft:oozing" oder Buch-Verzauberungen (leer = keine) */
+        public String variant = "";
         public double minPrice;
     }
 
@@ -175,6 +177,7 @@ public final class OrderAlertClient implements ClientModInitializer {
         r.item = stack.getHoverName().getString();
         r.id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
         r.plain = stack.getComponentsPatch().isEmpty();
+        r.variant = variantKey(stack);
         r.minPrice = minPrice;
         config.rules.add(r);
         save();
@@ -312,7 +315,7 @@ public final class OrderAlertClient implements ClientModInitializer {
             double price = findPrice(lore);
             if (price < 0) continue;
             orders++;
-            if (v && orders <= 8) say(mc, "\u00a77- \u00a7e" + itemLine(lore, name) + " \u00a77f\u00fcr \u00a7a$" + fmt(price));
+            if (v && orders <= 8) say(mc, "\u00a77- \u00a7e" + itemLine(lore, name) + " \u00a78(" + clientName(st) + ")\u00a77 f\u00fcr \u00a7a$" + fmt(price));
             // Schon voll geliefert? Dann uninteressant.
             boolean full = false;
             for (String line : lore) {
@@ -326,8 +329,12 @@ public final class OrderAlertClient implements ClientModInitializer {
                 if (price < r.minPrice) continue;
                 boolean hit;
                 if (r.id != null && !r.id.isEmpty()) {
-                    // Aus dem Menue: genauer Name, oder bei Items ohne Varianten die ID
-                    hit = what.equalsIgnoreCase(r.item.trim()) || (r.plain && fullId.equals(r.id));
+                    // Aus dem Menue: gleiches Item (Art + Trank/Verzauberung), egal in welcher Sprache
+                    String rv = r.variant == null ? "" : r.variant;
+                    hit = what.equalsIgnoreCase(r.item.trim())
+                            || (fullId.equals(r.id) && (r.plain
+                                || (!rv.isEmpty() && rv.equals(variantKey(st)))
+                                || clientName(st).equalsIgnoreCase(r.item.trim())));
                 } else {
                     hit = matches(r.item, what + " " + name + " " + String.join(" ", lore), id);
                 }
@@ -341,6 +348,33 @@ public final class OrderAlertClient implements ClientModInitializer {
             }
         }
         if (v) say(mc, "\u00a7f" + orders + " Orders erkannt, \u00a7a" + hits + " \u00a7fpassen zu deinen Alarmen.");
+    }
+
+    /** Trank-Typ bzw. Buch-Verzauberungen - gleich in jeder Sprache. */
+    public static String variantKey(ItemStack st) {
+        try {
+            var pc = st.get(DataComponents.POTION_CONTENTS);
+            if (pc != null && pc.potion().isPresent()) return "potion:" + pc.potion().get().getRegisteredName();
+            var ench = st.get(DataComponents.STORED_ENCHANTMENTS);
+            if (ench != null && !ench.isEmpty()) {
+                List<String> parts = new ArrayList<>();
+                for (var h : ench.keySet()) parts.add(h.getRegisteredName() + "=" + ench.getLevel(h));
+                java.util.Collections.sort(parts);
+                return "ench:" + String.join(",", parts);
+            }
+        } catch (Throwable ignored) {
+            // unbekannte Komponente
+        }
+        return "";
+    }
+
+    /** Name des Items in deiner Spielsprache (ignoriert umbenannte Anzeigenamen wie "Order von ..."). */
+    private static String clientName(ItemStack st) {
+        try {
+            return st.getItem().getName(st).getString();
+        } catch (Throwable t) {
+            return "";
+        }
     }
 
     /** Eine Order hat eine Zeile "Preis pro Stueck" (HugoSMP). */
