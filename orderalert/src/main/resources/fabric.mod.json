@@ -3,7 +3,7 @@
   "id": "orderalert",
   "version": "${version}",
   "name": "OrderAlert",
-  "description": "Meldet passende Orders im Order-Menue (z.B. HugoSMP). /orderalert",
+  "description": "Meldet neue Orders (HugoSMP), auch bei geschlossenem Menue. /orderalert",
   "authors": [
     "GalaSMP"
   ],
@@ -19,5 +19,8 @@
     "fabric-api": "*",
     "minecraft": "~1.21.11",
     "java": ">=21"
-  }
+  },
+  "mixins": [
+    "orderalert.mixins.json"
+  ]
 }

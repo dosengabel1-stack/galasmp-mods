@@ -49,15 +49,25 @@ public final class OrderAlertClient implements ClientModInitializer {
         /** Das Menue gilt als Order-Menue, wenn sein Titel eines dieser Woerter enthaelt */
         public List<String> titleContains = new ArrayList<>(List.of("order", "auftr"));
         /** Lore-Zeilen mit diesen Woertern enthalten den Preis */
-        public List<String> priceLineContains = new ArrayList<>(List.of("$", "preis", "price", "pro ", "each", "per ", "zahlt", "pays", "belohnung", "reward"));
+        public List<String> priceLineContains = new ArrayList<>(List.of("preis pro", "price per", "preis", "price", "$"));
+        /** Auch ohne offenes Menue pruefen: /orders im Hintergrund oeffnen, lesen, schliessen */
+        public boolean backgroundCheck = true;
+        public int intervalSeconds = 60;
+        public String command = "orders";
         public List<Rule> rules = new ArrayList<>();
     }
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Pattern NUMBER = Pattern.compile("(\\d[\\d.,]*)\\s*([kKmMbBtT]?)");
     private static Config config = new Config();
-    private static final Set<String> alerted = new HashSet<>();
+    /** Schon gemeldete Orders -> Zeitpunkt (nach 30 Minuten wieder erlaubt) */
+    private static final java.util.Map<String, Long> alerted = new java.util.HashMap<>();
     private static int tick;
+    private static long nextBackground;
+    /** Wir haben gerade selbst /orders geschickt - das naechste Menue gehoert uns */
+    public static long ownRequestUntil;
+    /** ID des im Hintergrund geoeffneten Menues, -1 = keins */
+    public static int hiddenContainer = -1;
 
     private static Path file() {
         return FabricLoader.getInstance().getConfigDir().resolve("orderalert.json");
@@ -147,47 +157,100 @@ public final class OrderAlertClient implements ClientModInitializer {
 
     private static void onTick(Minecraft mc) {
         if (!config.enabled || mc.player == null || config.rules.isEmpty()) return;
-        if (!(mc.screen instanceof AbstractContainerScreen<?> screen)) {
-            alerted.clear();   // naechstes Oeffnen meldet wieder
+        long now = System.currentTimeMillis();
+        alerted.values().removeIf(t -> now - t > 30 * 60_000L);
+
+        // 1) Menue ist offen: direkt mitlesen
+        if (mc.screen instanceof AbstractContainerScreen<?> screen) {
+            if (++tick % 10 != 0) return;
+            List<ItemStack> items = new ArrayList<>();
+            for (Slot slot : screen.getMenu().slots) {
+                if (slot.container != mc.player.getInventory()) items.add(slot.getItem());
+            }
+            if (isOrderMenu(screen.getTitle().getString(), items)) scan(mc, items);
+            nextBackground = now + config.intervalSeconds * 1000L;   // gerade selbst drin
             return;
         }
-        if (++tick % 10 != 0) return;
-        String title = screen.getTitle().getString().toLowerCase(Locale.ROOT);
-        boolean isOrders = false;
-        for (String t : config.titleContains) if (title.contains(t.toLowerCase(Locale.ROOT))) isOrders = true;
-        if (!isOrders) return;
 
-        for (Slot slot : screen.getMenu().slots) {
-            if (slot.container == mc.player.getInventory()) continue;
-            ItemStack st = slot.getItem();
-            if (st.isEmpty()) continue;
+        // 2) Hintergrund: regelmaessig /orders oeffnen lassen, aber nie, wenn ein Menue/Chat offen ist
+        if (!config.backgroundCheck || mc.screen != null || mc.getConnection() == null) return;
+        if (now < nextBackground || hiddenContainer != -1) return;
+        nextBackground = now + Math.max(15, config.intervalSeconds) * 1000L;
+        ownRequestUntil = now + 4000L;
+        mc.getConnection().sendCommand(config.command);
+    }
+
+    /** Ist das ein Order-Menue? Titel ODER mindestens ein Item mit "Preis pro". */
+    public static boolean isOrderMenu(String title, List<ItemStack> items) {
+        String t = title.toLowerCase(Locale.ROOT);
+        for (String w : config.titleContains) if (t.contains(w.toLowerCase(Locale.ROOT))) return true;
+        for (ItemStack st : items) {
+            for (String line : lore(st)) if (line.toLowerCase(Locale.ROOT).contains("preis pro") || line.toLowerCase(Locale.ROOT).contains("price per")) return true;
+        }
+        return false;
+    }
+
+    private static List<String> lore(ItemStack st) {
+        List<String> out = new ArrayList<>();
+        if (st == null || st.isEmpty()) return out;
+        ItemLore il = st.get(DataComponents.LORE);
+        if (il != null) for (Component c : il.lines()) out.add(c.getString());
+        return out;
+    }
+
+    private static final Pattern DELIVERED = Pattern.compile("([\\d.,]+)\\s*/\\s*([\\d.,]+)\\s*geliefert", Pattern.CASE_INSENSITIVE);
+
+    /** Alle Order-Items pruefen und bei Treffern melden. */
+    public static void scan(Minecraft mc, List<ItemStack> items) {
+        if (mc.player == null) return;
+        for (ItemStack st : items) {
+            if (st == null || st.isEmpty()) continue;
             String name = st.getHoverName().getString();
             String id = BuiltInRegistries.ITEM.getKey(st.getItem()).getPath();
-            List<String> lore = new ArrayList<>();
-            ItemLore il = st.get(DataComponents.LORE);
-            if (il != null) for (Component c : il.lines()) lore.add(c.getString());
+            List<String> lore = lore(st);
             double price = findPrice(lore);
             if (price < 0) continue;
+            // Schon voll geliefert? Dann uninteressant.
+            boolean full = false;
+            for (String line : lore) {
+                Matcher d = DELIVERED.matcher(line);
+                if (d.find() && parseNumber(d.group(1)) >= parseNumber(d.group(2))) full = true;
+            }
+            if (full) continue;
+            String what = itemLine(lore, name);
             for (Rule r : config.rules) {
-                if (!matches(r.item, name, id) || price < r.minPrice) continue;
-                String key = name + "|" + price + "|" + String.join("|", lore);
-                if (alerted.add(key)) notify(mc, name, price);
+                if (!matches(r.item, what + " " + name + " " + String.join(" ", lore), id) || price < r.minPrice) continue;
+                String key = String.join("|", lore.size() > 3 ? lore.subList(0, 4) : lore) + "|" + name;
+                if (!alerted.containsKey(key)) {
+                    alerted.put(key, System.currentTimeMillis());
+                    notify(mc, what, price);
+                }
             }
         }
     }
 
-    private static boolean matches(String want, String name, String id) {
+    /** Der Item-Name steht bei HugoSMP in der Zeile vor "Preis pro Stueck". */
+    private static String itemLine(List<String> lore, String fallback) {
+        for (int i = 1; i < lore.size(); i++) {
+            String l = lore.get(i).toLowerCase(Locale.ROOT);
+            if (l.contains("preis pro") || l.contains("price per")) return lore.get(i - 1).trim();
+        }
+        return fallback;
+    }
+
+    private static boolean matches(String want, String text, String id) {
         String w = want.toLowerCase(Locale.ROOT).trim();
-        String n = name.toLowerCase(Locale.ROOT);
+        String n = text.toLowerCase(Locale.ROOT);
         return n.contains(w) || id.equals(w.replace(' ', '_')) || id.contains(w.replace(' ', '_'));
     }
 
     private static void notify(Minecraft mc, String item, double price) {
-        String text = "§6§lOrder! §e" + item + " §ffuer §a$" + fmt(price);
+        String text = "§6§lNeue Order! §e" + item + " §ffuer §a$" + fmt(price) + " §fpro Stueck §7- /" + config.command;
         mc.player.displayClientMessage(Component.literal(text), false);
         SystemToast.addOrUpdate(mc.getToastManager(), SystemToast.SystemToastId.PERIODIC_NOTIFICATION,
                 Component.literal("Order gefunden"), Component.literal(item + " - $" + fmt(price)));
         mc.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.PLAYER_LEVELUP, 1.4F));
+        mc.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.NOTE_BLOCK_PLING, 2.0F));
     }
 
     // ---------------------------------------------------------------- Preis lesen
