@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "orderalert",
+  "version": "${version}",
+  "name": "OrderAlert",
+  "description": "Meldet passende Orders im Order-Menue (z.B. HugoSMP). /orderalert",
+  "authors": [
+    "GalaSMP"
+  ],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "net.galasmp.orderalert.OrderAlertClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "fabric-api": "*",
+    "minecraft": "~1.21.11",
+    "java": ">=21"
+  }
+}

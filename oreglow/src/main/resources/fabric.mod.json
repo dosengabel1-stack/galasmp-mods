@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "oreglow",
+  "version": "${version}",
+  "name": "OreGlow",
+  "description": "Leucht-Texturen fuer Erze, jedes einzeln an/aus (Taste O oder Mod Menu).",
+  "authors": [
+    "GalaSMP"
+  ],
+  "license": "MIT",
+  "environment": "client",
+  "icon": "assets/oreglow/icon.png",
+  "entrypoints": {
+    "client": [
+      "net.galasmp.oreglow.OreGlowClient"
+    ],
+    "modmenu": [
+      "net.galasmp.oreglow.OreGlowModMenu"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "fabric-api": "*",
+    "minecraft": "~1.21.11",
+    "java": ">=21"
+  },
+  "suggests": {
+    "modmenu": "*"
+  }
+}
