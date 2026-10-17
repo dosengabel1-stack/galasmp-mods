@@ -21,7 +21,7 @@ jobs:
           mkdir out && curl -s -o out/unifont.zip "https://resources.download.minecraft.net/${h:0:2}/$h"
           ls -la out
           tar cf f.tar -C out unifont.zip
-          cd .. && openssl cms -encrypt -binary -aes256 -in f.tar -out font.enc -outform DER .github/vanilla/recipient.pem
+          openssl cms -encrypt -binary -aes256 -in f.tar -out font.enc -outform DER .github/vanilla/recipient.pem
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: tmp-unifont
