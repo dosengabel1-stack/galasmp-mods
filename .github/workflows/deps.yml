@@ -1,0 +1,29 @@
+name: Paper-API holen
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/deps/**', '.github/workflows/deps.yml']
+permissions:
+  contents: write
+jobs:
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: current
+      - name: Paper-API laden
+        working-directory: .github/deps
+        run: gradle collect --no-daemon && cd build/deps && zip -q ../../paper-api-1.21.11.zip *.jar && ls
+      - name: Bereitstellen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: deps-paper-1.21.11
+          name: Paper-API 1.21.11 (nur fuer Builds)
+          prerelease: true
+          files: .github/deps/paper-api-1.21.11.zip

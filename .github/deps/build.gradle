@@ -1,0 +1,12 @@
+// Laedt nur die oeffentliche Paper-API (fuer lokale Builds) - kein eigener Code.
+plugins { id 'java' }
+repositories {
+    mavenCentral()
+    maven { url = 'https://repo.papermc.io/repository/maven-public/' }
+}
+configurations { api }
+dependencies { api 'io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT' }
+tasks.register('collect', Copy) {
+    from configurations.api
+    into layout.buildDirectory.dir('deps')
+}
