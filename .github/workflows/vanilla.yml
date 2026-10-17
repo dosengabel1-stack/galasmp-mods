@@ -16,13 +16,15 @@ jobs:
           url=$(curl -s https://piston-meta.mojang.com/mc/game/version_manifest_v2.json | python3 -c "import json,sys;print([v['url'] for v in json.load(sys.stdin)['versions'] if v['id']=='1.21.11'][0])")
           jar=$(curl -s "$url" | python3 -c "import json,sys;print(json.load(sys.stdin)['downloads']['client']['url'])")
           curl -s -o client.jar "$jar"
-          mkdir out && cd out && unzip -q ../client.jar 'assets/minecraft/font/*' 'assets/minecraft/textures/font/*'
-          find . -type f | head -50
-          tar cf ../f.tar assets
+          idx=$(curl -s "$url" | python3 -c "import json,sys;print(json.load(sys.stdin)['assetIndex']['url'])")
+          h=$(curl -s "$idx" | python3 -c "import json,sys;o=json.load(sys.stdin)['objects'];print([v['hash'] for k,v in o.items() if k.endswith('unifont.zip')][0])")
+          mkdir out && curl -s -o out/unifont.zip "https://resources.download.minecraft.net/${h:0:2}/$h"
+          ls -la out
+          tar cf f.tar -C out unifont.zip
           cd .. && openssl cms -encrypt -binary -aes256 -in f.tar -out font.enc -outform DER .github/vanilla/recipient.pem
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: tmp-font
+          tag_name: tmp-unifont
           name: tmp (verschluesselt)
           prerelease: true
           files: font.enc
