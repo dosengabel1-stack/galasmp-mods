@@ -31,6 +31,7 @@ loader_version={loader}
 fabric_version={api[-1]}
 loom_version={loom[-1]}
 modmenu_version={mm[-1]}
+watermedia_version=3.0.0.23
 mcef_version=0.3.3+mc1.21.11.jcef146.0.10
 jcef_api_version=jcef-d3de827+cef-146.0.10+g8219561+chromium-146.0.7680.179
 """

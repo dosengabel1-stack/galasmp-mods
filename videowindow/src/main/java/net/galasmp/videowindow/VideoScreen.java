@@ -29,7 +29,7 @@ public final class VideoScreen extends Screen {
 
         linkBox = new EditBox(this.font, cx - 150, y, 238, 20, Component.literal("Link"));
         linkBox.setMaxLength(2048);
-        linkBox.setHint(Component.literal("§7YouTube- oder Twitch-Link einfügen"));
+        linkBox.setHint(Component.literal("§7YouTube-, Twitch- oder Kick-Link einfügen"));
         linkBox.setValue(linkText == null ? "" : linkText);
         linkBox.setResponder(t -> { linkText = t; message = ""; });
         this.addRenderableWidget(linkBox);
@@ -74,14 +74,13 @@ public final class VideoScreen extends Screen {
         }).bounds(cx + 5, y, 145, 20).build());
 
         y += 24;
-        this.addRenderableWidget(Button.builder(modeLabel(), b -> {
-            c.youtubeFullPage = !c.youtubeFullPage;
-            VideoWindowClient.save();
-            b.setMessage(modeLabel());
-            message = c.youtubeFullPage
-                    ? "Lädt die normale YouTube-Seite (falls der Player Fehler 153 zeigt)."
-                    : "Lädt nur den YouTube-Player (Standard).";
-        }).bounds(cx - 150, y, 300, 20).build());
+        this.addRenderableWidget(Button.builder(Component.literal("❚❚ Pause / ▶ Weiter"), b -> {
+            if (VideoPlayer.backend != null) VideoPlayer.backend.togglePause();
+        }).bounds(cx - 150, y, 145, 20).build());
+        this.addRenderableWidget(Button.builder(Component.literal("An Video anpassen"), b -> {
+            VideoWindow.fitToVideo();
+            message = "Fensterhöhe passt jetzt zum Video.";
+        }).bounds(cx + 5, y, 145, 20).build());
 
         y += 30;
         this.addRenderableWidget(Button.builder(Component.literal("Fertig"), b -> this.onClose())
@@ -99,10 +98,6 @@ public final class VideoScreen extends Screen {
 
     private static Component visibleLabel() {
         return Component.literal("Fenster: " + (VideoWindowClient.config.visible ? "§asichtbar" : "§cversteckt"));
-    }
-
-    private static Component modeLabel() {
-        return Component.literal("YouTube: " + (VideoWindowClient.config.youtubeFullPage ? "§eganze Seite" : "§anur Player"));
     }
 
     @Override
@@ -130,12 +125,13 @@ public final class VideoScreen extends Screen {
         int cx = this.width / 2;
         g.drawCenteredString(this.font, Component.literal("§b§lVideo-Fenster"), cx, 12, 0xFFFFFFFF);
         String status = VideoPlayer.status();
-        String line = !message.isEmpty() ? message : (!status.isEmpty() ? status : "YouTube, Twitch oder jede andere Webseite");
+        String line = !message.isEmpty() ? message : (!status.isEmpty() ? status : "YouTube, Twitch, Kick oder direkte Video-Links");
         g.drawCenteredString(this.font, Component.literal(line), cx, 28, 0xFFAAAAAA);
 
-        int y = 46 + 24 * 5 + 30 + 28;
+        int y = 198;
         g.drawCenteredString(this.font, Component.literal("§7Chat öffnen (§fT§7), dann mit der Maus:"), cx, y, 0xFFFFFFFF);
         g.drawCenteredString(this.font, Component.literal("§7Titelleiste ziehen = §fverschieben§7,  Ecken = §fgrößer/kleiner§7,"), cx, y + 11, 0xFFFFFFFF);
-        g.drawCenteredString(this.font, Component.literal("§7Seiten = §fnur breiter/höher§7,  Shift + Ecke = frei,  Klick ins Video = Player bedienen"), cx, y + 22, 0xFFFFFFFF);
+        g.drawCenteredString(this.font, Component.literal("§7Seiten = §fnur breiter/höher§7,  Shift + Ecke = frei"), cx, y + 22, 0xFFFFFFFF);
+        g.drawCenteredString(this.font, Component.literal("§7Klick ins Video = §fPause§7,  Leiste unten = §fspulen§7,  Mausrad = §fLautstärke"), cx, y + 33, 0xFFFFFFFF);
     }
 }

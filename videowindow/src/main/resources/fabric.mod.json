@@ -3,7 +3,7 @@
   "id": "videowindow",
   "version": "${version}",
   "name": "VideoWindow",
-  "description": "Verschiebbares Video-Fenster (YouTube, Twitch, Webseiten) mit Ton im Spiel. Taste B oder /video <Link>",
+  "description": "Verschiebbares Video-Fenster (YouTube, Twitch, Kick) mit Ton im Spiel. Taste B oder /video <Link>",
   "authors": [
     "GalaSMP"
   ],
@@ -14,10 +14,13 @@
       "net.galasmp.videowindow.VideoWindowClient"
     ]
   },
+  "recommends": {
+    "mcef-modern": "*"
+  },
   "depends": {
     "fabricloader": ">=0.16.0",
     "fabric-api": "*",
-    "mcef-modern": "*",
+    "watermedia": ">=3.0.0",
     "minecraft": "~1.21.11",
     "java": ">=21"
   }

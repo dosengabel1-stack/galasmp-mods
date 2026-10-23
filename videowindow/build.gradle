@@ -2,7 +2,7 @@ plugins {
     id 'fabric-loom' version "${loom_version}"
 }
 
-version = '1.0.0'
+version = '2.0.0'
 group = 'net.galasmp'
 base { archivesName = 'VideoWindow' }
 
@@ -20,7 +20,9 @@ dependencies {
     mappings loom.officialMojangMappings()
     modImplementation "net.fabricmc:fabric-loader:${loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
-    // Browser (Chromium) - MCEF Modern muss als eigene Mod installiert sein
+    // Video-Player (FFmpeg, yt-dlp) - WaterMedia muss als eigene Mod installiert sein
+    modCompileOnly("maven.modrinth:watermedia:${watermedia_version}") { transitive = false }
+    // Browser fuer normale Webseiten - optional
     modCompileOnly("maven.modrinth:mcef-modern:${mcef_version}") { transitive = false }
     compileOnly "me.friwi:jcef-api:${jcef_api_version}"
 }

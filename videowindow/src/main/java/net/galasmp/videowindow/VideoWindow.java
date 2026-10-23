@@ -17,17 +17,17 @@ import net.minecraft.client.renderer.RenderPipelines;
 import org.joml.Matrix3x2f;
 import org.lwjgl.glfw.GLFW;
 
-/** Das Fenster selbst: zeichnen, verschieben, Groesse aendern. Alle Werte in GUI-Koordinaten. */
+/** Das Fenster selbst: zeichnen, verschieben, Groesse aendern, Player bedienen. Alles in GUI-Koordinaten. */
 public final class VideoWindow {
 
     private VideoWindow() {}
 
     /** Hoehe der Titelleiste (nur bei offenem Chat sichtbar) */
     static final int TITLE = 14;
-    private static final int MIN_W = 64, MIN_H = 36;
-    /** Breite der Greifzone an den Raendern */
+    /** Hoehe der Steuerleiste unten im Video (nur bei offenem Chat) */
+    static final int CTRL = 13;
+    private static final int MIN_W = 80, MIN_H = 45;
     private static final int EDGE = 4;
-    /** Laenge der Eck-Greifzone */
     private static final int CORNER = 10;
     private static final int BTN = 11;
 
@@ -35,19 +35,20 @@ public final class VideoWindow {
     private static final CursorType RESIZE_NESW = CursorType.createStandardCursor(GLFW.GLFW_RESIZE_NESW_CURSOR, "videowindow_nesw", CursorType.DEFAULT);
     private static final CursorType MOVE = CursorType.createStandardCursor(GLFW.GLFW_RESIZE_ALL_CURSOR, "videowindow_move", CursorType.DEFAULT);
 
-    enum Zone { NONE, VIDEO, TITLE, BTN_LINK, BTN_HIDE, BTN_CLOSE, N, S, E, W, NE, NW, SE, SW }
+    enum Zone { NONE, VIDEO, TITLE, BTN_LINK, BTN_HIDE, BTN_CLOSE, BTN_PLAY, SEEK, CONTROLS, N, S, E, W, NE, NW, SE, SW }
 
-    // aktuelle Fensterlage (Videobereich, ohne Titelleiste)
     private static int x, y, w, h;
     private static int screenW, screenH;
 
-    // Ziehen
     private static Zone drag = Zone.NONE;
     private static double startMx, startMy;
     private static int sx, sy, sw, sh;
     private static boolean videoPressed;
+    /** Beim Spulen: Vorschau-Position 0..1, -1 = nicht am Spulen */
+    private static double seekPreview = -1;
     private static int lastHoverX = Integer.MIN_VALUE, lastHoverY = Integer.MIN_VALUE;
     private static boolean hoverInside;
+    private static long volumeShownUntil;
 
     // ------------------------------------------------------------------ Lage
 
@@ -95,6 +96,16 @@ public final class VideoWindow {
         VideoWindowClient.save();
     }
 
+    /** Fenster auf das Seitenverhaeltnis des Videos bringen (Breite bleibt) */
+    public static void fitToVideo() {
+        Backend b = VideoPlayer.backend;
+        if (b == null || b.videoWidth() <= 0 || b.videoHeight() <= 0) return;
+        layout();
+        int nh = (int) Math.round(w * b.videoHeight() / (double) b.videoWidth());
+        setRect(x, y, w, nh);
+        VideoWindowClient.save();
+    }
+
     private static boolean shown() {
         return VideoWindowClient.config.visible && VideoPlayer.active();
     }
@@ -103,30 +114,37 @@ public final class VideoWindow {
         return Minecraft.getInstance().screen instanceof ChatScreen;
     }
 
+    private static Backend backend() {
+        return VideoPlayer.backend;
+    }
+
     // ------------------------------------------------------------------ Zeichnen
 
     public static void render(GuiGraphics g) {
         if (!shown()) return;
         Minecraft mc = Minecraft.getInstance();
+        Font font = mc.font;
         layout();
         boolean chat = chatOpen();
+        Backend b = backend();
 
-        // Browser-Aufloesung an echte Pixel anpassen (scharfes Bild)
-        double scale = mc.getWindow().getGuiScale();
-        VideoPlayer.wantSize(Math.max(16, (int) Math.round(w * scale)), Math.max(16, (int) Math.round(h * scale)), drag == Zone.NONE);
+        if (b != null) {
+            double scale = mc.getWindow().getGuiScale();
+            b.resize(Math.max(16, (int) Math.round(w * scale)), Math.max(16, (int) Math.round(h * scale)), drag == Zone.NONE);
+        }
 
         int border = chat ? (drag != Zone.NONE ? 0xFF55AAFF : 0xFF3A3A3A) : 0xAA000000;
         g.fill(x - 1, y - 1, x + w + 1, y + h + 1, border);
         g.fill(x, y, x + w, y + h, 0xFF000000);
 
-        GpuTextureView tex = VideoPlayer.browser != null ? VideoPlayer.browser.getTextureView() : null;
-        boolean bounce = tex != null && isBouncePage();
-        if (tex != null && !bounce) {
+        GpuTextureView tex = b != null ? b.texture() : null;
+        if (tex != null) {
+            int[] r = videoRect(b);
             g.guiRenderState.submitGuiElement(new BlitRenderState(
                     RenderPipelines.GUI_TEXTURED,
                     TextureSetup.singleTexture(tex, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR)),
                     new Matrix3x2f(g.pose()),
-                    x, y, x + w, y + h,
+                    r[0], r[1], r[2], r[3],
                     0.0F, 1.0F, 0.0F, 1.0F,
                     0xFFFFFFFF,
                     g.scissorStack.peek()
@@ -134,27 +152,40 @@ public final class VideoWindow {
         }
 
         String status = VideoPlayer.status();
-        if (!status.isEmpty() && (tex == null || bounce || !VideoPlayer.error.isEmpty())) {
-            Font font = mc.font;
+        if (!status.isEmpty()) {
             int ty = y + h / 2 - 4;
             g.fill(x, ty - 4, x + w, ty + 12, 0xCC000000);
             g.drawCenteredString(font, cut(font, status, w - 6), x + w / 2, ty, 0xFFFFFFFF);
+        } else if (b != null && b.paused() && !chat) {
+            g.drawString(font, "❚❚", x + 4, y + 4, 0xDDFFFFFF);
         }
 
-        if (chat) renderFrame(g, mc);
-    }
+        if (System.currentTimeMillis() < volumeShownUntil) {
+            String v = "Lautstärke " + VideoWindowClient.config.volume + "%";
+            int vw = font.width(v) + 8;
+            g.fill(x + w - vw - 3, y + 3, x + w - 3, y + 15, 0xCC000000);
+            g.drawString(font, v, x + w - vw + 1, y + 5, 0xFFFFFFFF);
+        }
 
-    private static boolean isBouncePage() {
-        try {
-            String u = VideoPlayer.browser.getCefBrowser().getURL();
-            return u != null && u.contains("robots.txt");
-        } catch (Throwable t) {
-            return false;
+        if (chat) {
+            int[] mouse = mouseGui();
+            Zone hover = drag != Zone.NONE ? drag : zoneAt(mouse[0], mouse[1]);
+            if (b != null && b.hasControls()) renderControls(g, font, b, hover, mouse[0]);
+            renderFrame(g, font, hover);
         }
     }
 
-    private static void renderFrame(GuiGraphics g, Minecraft mc) {
-        Font font = mc.font;
+    /** Bildbereich: Video mit schwarzen Balken im richtigen Seitenverhaeltnis, Browser fuellt alles */
+    private static int[] videoRect(Backend b) {
+        int vw = b.videoWidth(), vh = b.videoHeight();
+        if (vw <= 0 || vh <= 0) return new int[]{x, y, x + w, y + h};
+        double s = Math.min(w / (double) vw, h / (double) vh);
+        int dw = (int) Math.round(vw * s), dh = (int) Math.round(vh * s);
+        int dx = x + (w - dw) / 2, dy = y + (h - dh) / 2;
+        return new int[]{dx, dy, dx + dw, dy + dh};
+    }
+
+    private static void renderFrame(GuiGraphics g, Font font, Zone hover) {
         int top = y - TITLE;
         g.fill(x - 1, top, x + w + 1, y, 0xF0202020);
         g.fill(x - 1, top, x + w + 1, top + 1, 0xFF55AAFF);
@@ -163,19 +194,63 @@ public final class VideoWindow {
         String title = "▶ " + (VideoPlayer.link.isEmpty() ? "Video" : VideoPlayer.link);
         g.drawString(font, cut(font, title, bx - x - 6), x + 4, top + 3, 0xFFDDDDDD);
 
-        int[] mouse = mouseGui();
-        Zone hover = zoneAt(mouse[0], mouse[1]);
         drawButton(g, font, bx, top + 2, "✎", hover == Zone.BTN_LINK, 0xFFFFFFFF);
         drawButton(g, font, bx + BTN + 2, top + 2, "–", hover == Zone.BTN_HIDE, 0xFFFFFFFF);
         drawButton(g, font, bx + (BTN + 2) * 2, top + 2, "×", hover == Zone.BTN_CLOSE, 0xFFFF6666);
 
-        // Ecken markieren
         int c = 0xFFAAAAAA;
         g.fill(x - 1, top, x + 4, top + 1, c);
         g.fill(x + w - 4, y + h, x + w + 1, y + h + 1, c);
         g.fill(x + w, y + h - 4, x + w + 1, y + h + 1, c);
         g.fill(x - 1, y + h, x + 4, y + h + 1, c);
         g.fill(x - 1, y + h - 4, x, y + h + 1, c);
+    }
+
+    // ---- Steuerleiste (Pause, Spulen, Zeit) ----
+
+    private static String timeText(Backend b) {
+        if (b.live()) return "§c● LIVE";
+        long d = b.duration();
+        long t = seekPreview >= 0 && d > 0 ? (long) (seekPreview * d) : b.time();
+        return fmt(t) + (d > 0 ? " / " + fmt(d) : "");
+    }
+
+    private static String fmt(long ms) {
+        long s = ms / 1000;
+        long hh = s / 3600, mm = (s / 60) % 60, ss = s % 60;
+        return hh > 0 ? String.format("%d:%02d:%02d", hh, mm, ss) : String.format("%d:%02d", mm, ss);
+    }
+
+    /** {playX0, playX1, seekX0, seekX1, barTop} */
+    private static int[] controlsLayout(Font font, Backend b) {
+        int barTop = y + h - CTRL;
+        int timeW = font.width(timeText(b)) + 6;
+        int seekX0 = x + 16, seekX1 = x + w - timeW - 4;
+        return new int[]{x + 2, x + 13, seekX0, Math.max(seekX0, seekX1), barTop};
+    }
+
+    private static void renderControls(GuiGraphics g, Font font, Backend b, Zone hover, int mouseX) {
+        int[] l = controlsLayout(font, b);
+        int top = l[4];
+        g.fill(x, top, x + w, y + h, 0xC0000000);
+
+        // Play/Pause
+        g.fill(l[0], top + 1, l[1], top + 12, hover == Zone.BTN_PLAY ? 0xFF505050 : 0x00000000);
+        g.drawCenteredString(font, b.paused() ? "▶" : "❚❚", (l[0] + l[1]) / 2 + 1, top + 3, 0xFFFFFFFF);
+
+        // Spulleiste
+        int barY = top + 5;
+        if (b.canSeek() && l[3] > l[2]) {
+            g.fill(l[2], barY, l[3], barY + 3, 0xFF555555);
+            double p = seekPreview >= 0 ? seekPreview : (b.duration() > 0 ? b.time() / (double) b.duration() : 0);
+            p = Math.max(0, Math.min(1, p));
+            int px = l[2] + (int) Math.round((l[3] - l[2]) * p);
+            g.fill(l[2], barY, px, barY + 3, 0xFFFF3B3B);
+            if (hover == Zone.SEEK || seekPreview >= 0) g.fill(px - 1, barY - 2, px + 2, barY + 5, 0xFFFFFFFF);
+        }
+
+        String t = timeText(b);
+        g.drawString(font, t, x + w - font.width(t) - 4, top + 3, 0xFFDDDDDD);
     }
 
     private static void drawButton(GuiGraphics g, Font font, int bx, int by, String label, boolean hover, int color) {
@@ -227,7 +302,16 @@ public final class VideoWindow {
             }
             return Zone.TITLE;
         }
-        if (mx >= x && mx < x + w && my >= y && my < y + h) return Zone.VIDEO;
+        if (mx >= x && mx < x + w && my >= y && my < y + h) {
+            Backend be = backend();
+            if (be != null && be.hasControls() && my >= y + h - CTRL) {
+                int[] c = controlsLayout(Minecraft.getInstance().font, be);
+                if (mx >= c[0] && mx < c[1]) return Zone.BTN_PLAY;
+                if (be.canSeek() && mx >= c[2] - 2 && mx < c[3] + 2) return Zone.SEEK;
+                return Zone.CONTROLS;
+            }
+            return Zone.VIDEO;
+        }
         return Zone.TITLE;   // 1-px-Rahmen: wie Titelleiste (verschieben)
     }
 
@@ -240,11 +324,22 @@ public final class VideoWindow {
         Zone z = zoneAt(e.x(), e.y());
         if (z == Zone.NONE) return false;
         Minecraft mc = Minecraft.getInstance();
+        Backend b = backend();
         switch (z) {
             case VIDEO -> {
-                videoPressed = true;
-                VideoPlayer.mouseClicked(toBrowser(e));
+                if (b == null) return true;
+                if (b.interactive()) {
+                    videoPressed = true;
+                    b.mouseClicked(toBrowser(b, e));
+                } else if (e.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+                    b.togglePause();
+                }
             }
+            case BTN_PLAY -> { if (b != null) b.togglePause(); }
+            case SEEK -> {
+                if (b != null && b.canSeek()) seekPreview = seekFraction(b, e.x());
+            }
+            case CONTROLS -> { }
             case BTN_LINK -> mc.execute(() -> mc.setScreen(new VideoScreen(mc.screen)));
             case BTN_HIDE -> {
                 VideoWindowClient.config.visible = false;
@@ -263,10 +358,23 @@ public final class VideoWindow {
         return true;
     }
 
+    private static double seekFraction(Backend b, double mx) {
+        int[] c = controlsLayout(Minecraft.getInstance().font, b);
+        if (c[3] <= c[2]) return 0;
+        return Math.max(0, Math.min(1, (mx - c[2]) / (double) (c[3] - c[2])));
+    }
+
     public static boolean mouseDragged(MouseButtonEvent e) {
+        Backend b = backend();
+        if (seekPreview >= 0) {
+            if (b != null) seekPreview = seekFraction(b, e.x());
+            return true;
+        }
         if (videoPressed) {
-            MouseButtonEvent b = toBrowser(e);
-            VideoPlayer.mouseMoved((int) b.x(), (int) b.y());
+            if (b != null) {
+                MouseButtonEvent be = toBrowser(b, e);
+                b.mouseMoved((int) be.x(), (int) be.y());
+            }
             return true;
         }
         if (drag == Zone.NONE) return false;
@@ -288,7 +396,6 @@ public final class VideoWindow {
         if (south) nh = sh + dy;
         if (north) nh = sh - dy;
 
-        // Platz bis zum Bildschirmrand (Gegenseite bleibt stehen)
         double maxW = west ? sx + sw : screenW - sx;
         double maxH = north ? sy + sh - TITLE : screenH - sy;
 
@@ -311,9 +418,15 @@ public final class VideoWindow {
     }
 
     public static boolean mouseReleased(MouseButtonEvent e) {
+        Backend b = backend();
+        if (seekPreview >= 0) {
+            if (b != null) b.seek((long) (seekFraction(b, e.x()) * b.duration()));
+            seekPreview = -1;
+            return true;
+        }
         if (videoPressed) {
             videoPressed = false;
-            VideoPlayer.mouseReleased(toBrowser(e));
+            if (b != null) b.mouseReleased(toBrowser(b, e));
             return true;
         }
         if (drag != Zone.NONE) {
@@ -327,9 +440,16 @@ public final class VideoWindow {
     public static boolean mouseScrolled(double mx, double my, double amount) {
         if (!shown()) return false;
         Zone z = zoneAt(mx, my);
-        if (z == Zone.VIDEO) {
-            int[] p = toBrowser(mx, my);
-            VideoPlayer.mouseScrolled(p[0], p[1], amount);
+        Backend b = backend();
+        if ((z == Zone.VIDEO || z == Zone.CONTROLS || z == Zone.SEEK || z == Zone.BTN_PLAY) && b != null) {
+            if (b.interactive() && z == Zone.VIDEO) {
+                int[] p = toBrowser(b, mx, my);
+                b.mouseScrolled(p[0], p[1], amount);
+            } else {
+                // Mausrad = Lautstaerke
+                VideoPlayer.setVolume(VideoWindowClient.config.volume + (amount > 0 ? 5 : -5));
+                volumeShownUntil = System.currentTimeMillis() + 1200;
+            }
             return true;
         }
         return z != Zone.NONE;
@@ -338,6 +458,7 @@ public final class VideoWindow {
     /** Nach dem Zeichnen des Chats: Mauszeiger setzen und Hover ans Video geben */
     public static void afterChatRender(GuiGraphics g, int mx, int my) {
         if (!shown()) return;
+        Backend b = backend();
         Zone z = drag != Zone.NONE ? drag : zoneAt(mx, my);
         CursorType cursor = switch (z) {
             case N, S -> CursorTypes.RESIZE_NS;
@@ -345,19 +466,19 @@ public final class VideoWindow {
             case NW, SE -> RESIZE_NWSE;
             case NE, SW -> RESIZE_NESW;
             case TITLE -> MOVE;
-            case BTN_LINK, BTN_HIDE, BTN_CLOSE -> CursorTypes.POINTING_HAND;
-            case VIDEO -> VideoPlayer.browser != null ? VideoPlayer.browser.getCursorType() : CursorTypes.ARROW;
+            case BTN_LINK, BTN_HIDE, BTN_CLOSE, BTN_PLAY, SEEK -> CursorTypes.POINTING_HAND;
+            case VIDEO -> b != null && b.cursor() != null ? b.cursor() : (b != null && !b.interactive() ? CursorTypes.POINTING_HAND : CursorTypes.ARROW);
             default -> null;
         };
         if (cursor != null) g.requestCursor(cursor);
 
-        if (videoPressed) return;   // laeuft ueber mouseDragged
+        if (b == null || !b.interactive() || videoPressed) return;
         boolean inside = z == Zone.VIDEO;
         if (inside && (mx != lastHoverX || my != lastHoverY)) {
-            int[] p = toBrowser(mx, my);
-            VideoPlayer.mouseMoved(p[0], p[1]);
+            int[] p = toBrowser(b, mx, my);
+            b.mouseMoved(p[0], p[1]);
         } else if (!inside && hoverInside) {
-            VideoPlayer.mouseMoved(-10, -10);
+            b.mouseMoved(-10, -10);
         }
         hoverInside = inside;
         lastHoverX = mx;
@@ -365,8 +486,11 @@ public final class VideoWindow {
     }
 
     public static void chatClosed() {
-        if (videoPressed) VideoPlayer.mouseReleased(new MouseButtonEvent(-10, -10, new MouseButtonInfo(GLFW.GLFW_MOUSE_BUTTON_LEFT, 0)));
-        if (hoverInside) VideoPlayer.mouseMoved(-10, -10);
+        Backend b = backend();
+        if (b != null) {
+            if (videoPressed) b.mouseReleased(new MouseButtonEvent(-10, -10, new MouseButtonInfo(GLFW.GLFW_MOUSE_BUTTON_LEFT, 0)));
+            if (hoverInside) b.mouseMoved(-10, -10);
+        }
         if (drag != Zone.NONE) VideoWindowClient.save();
         reset();
     }
@@ -374,22 +498,23 @@ public final class VideoWindow {
     public static void reset() {
         drag = Zone.NONE;
         videoPressed = false;
+        seekPreview = -1;
         hoverInside = false;
         lastHoverX = lastHoverY = Integer.MIN_VALUE;
     }
 
     // ------------------------------------------------------------------ GUI -> Browser-Pixel
 
-    private static int[] toBrowser(double mx, double my) {
-        int pw = VideoPlayer.pixelW > 0 ? VideoPlayer.pixelW : w;
-        int ph = VideoPlayer.pixelH > 0 ? VideoPlayer.pixelH : h;
+    private static int[] toBrowser(Backend b, double mx, double my) {
+        int pw = b.pixelW() > 0 ? b.pixelW() : w;
+        int ph = b.pixelH() > 0 ? b.pixelH() : h;
         int bx = (int) Math.floor((mx - x) * pw / Math.max(1, w));
         int by = (int) Math.floor((my - y) * ph / Math.max(1, h));
         return new int[]{bx, by};
     }
 
-    private static MouseButtonEvent toBrowser(MouseButtonEvent e) {
-        int[] p = toBrowser(e.x(), e.y());
+    private static MouseButtonEvent toBrowser(Backend b, MouseButtonEvent e) {
+        int[] p = toBrowser(b, e.x(), e.y());
         return new MouseButtonEvent(p[0], p[1], e.buttonInfo());
     }
 }

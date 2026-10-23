@@ -54,17 +54,16 @@ jobs:
           cp oreglow/build/libs/OreGlow-*.jar out/ && cp orderalert/build/libs/OrderAlert-*.jar out/ && cp videowindow/build/libs/VideoWindow-*.jar out/
           rm -f out/*-sources.jar
           ls -la out
-      - name: MCEF Modern dazulegen (Browser fuer VideoWindow)
+      - name: WaterMedia dazulegen (Video-Player fuer VideoWindow)
         run: |
           python3 - <<'PY'
           import json, urllib.request
-          q = 'https://api.modrinth.com/v2/project/mcef-modern/version?game_versions=%5B%221.21.11%22%5D&loaders=%5B%22fabric%22%5D'
-          req = urllib.request.Request(q, headers={"User-Agent": "galasmp-mods build"})
-          v = json.load(urllib.request.urlopen(req, timeout=60))[0]
-          f = next(f for f in v["files"] if f.get("primary")) if any(f.get("primary") for f in v["files"]) else v["files"][0]
-          print("MCEF:", v["version_number"], f["filename"])
-          req = urllib.request.Request(f["url"], headers={"User-Agent": "galasmp-mods build"})
-          open("out/" + f["filename"], "wb").write(urllib.request.urlopen(req, timeout=120).read())
+          H = {"User-Agent": "galasmp-mods build"}
+          q = 'https://api.modrinth.com/v2/project/watermedia/version?game_versions=%5B%221.21.11%22%5D&loaders=%5B%22fabric%22%5D'
+          v = json.load(urllib.request.urlopen(urllib.request.Request(q, headers=H), timeout=60))[0]
+          f = next((f for f in v["files"] if f.get("primary")), v["files"][0])
+          print("WaterMedia:", v["version_number"], f["filename"])
+          open("out/" + f["filename"], "wb").write(urllib.request.urlopen(urllib.request.Request(f["url"], headers=H), timeout=120).read())
           PY
           ls -la out
       - uses: actions/upload-artifact@v4

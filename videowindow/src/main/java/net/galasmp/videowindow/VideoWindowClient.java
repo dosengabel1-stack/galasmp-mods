@@ -5,7 +5,6 @@ import com.google.gson.GsonBuilder;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
-import net.dimaskama.mcef.api.MCEFApi;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -28,10 +27,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * VideoWindow: ein Video-Fenster (YouTube, Twitch, beliebige Webseite) mit Ton im Spiel.
+ * VideoWindow: ein Video-Fenster (YouTube, Twitch, Kick, Video-Links) mit Ton im Spiel.
+ * Abgespielt wird ueber WaterMedia (FFmpeg); normale Webseiten notfalls ueber MCEF (optional).
  *   Taste B          -> Link eingeben, Lautstaerke, Fenster zeigen/verstecken
  *   /video <Link>    -> Video starten
- *   /video stopp | zeigen | verstecken | lautstaerke <0-100>
+ *   /video stopp | pause | zeigen | verstecken | lautstaerke <0-100>
  * Bei offenem Chat (T) kann das Fenster mit der Maus verschoben und an Ecken/Seiten
  * in der Groesse veraendert werden.
  */
@@ -44,8 +44,6 @@ public final class VideoWindowClient implements ClientModInitializer {
         public double fx = -1, fy = -1, fw = -1, fh = -1;
         public boolean visible = true;
         public int volume = 70;
-        /** true = bei YouTube die ganze Seite laden statt nur den Player */
-        public boolean youtubeFullPage = false;
         public String lastLink = "";
     }
 
@@ -87,12 +85,8 @@ public final class VideoWindowClient implements ClientModInitializer {
     public void onInitializeClient() {
         load();
 
-        // Chromium schon beim Start vorbereiten (beim allerersten Start wird es heruntergeladen)
-        try {
-            MCEFApi.initialize();
-        } catch (Throwable t) {
-            VideoPlayer.error = "Browser konnte nicht starten: " + t.getMessage();
-        }
+        // Optionaler Browser fuer normale Webseiten: schon beim Start vorbereiten
+        if (VideoPlayer.HAS_BROWSER) BrowserBackend.init();
 
         openKey = KeyBindingHelper.registerKeyBinding(new KeyMapping(
                 "key.videowindow.open", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_B, KeyMapping.Category.MISC));
@@ -127,6 +121,10 @@ public final class VideoWindowClient implements ClientModInitializer {
                         .then(ClientCommandManager.literal("stopp").executes(ctx -> {
                             VideoPlayer.stop();
                             ctx.getSource().sendFeedback(msg("§fVideo gestoppt."));
+                            return 1;
+                        }))
+                        .then(ClientCommandManager.literal("pause").executes(ctx -> {
+                            if (VideoPlayer.backend != null) VideoPlayer.backend.togglePause();
                             return 1;
                         }))
                         .then(ClientCommandManager.literal("zeigen").executes(ctx -> {
