@@ -1,0 +1,41 @@
+name: WaterMedia holen
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/deps-watermedia.yml']
+permissions:
+  contents: write
+jobs:
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Jars von Modrinth laden
+        run: |
+          mkdir out
+          python3 - <<'PY'
+          import json, urllib.request, urllib.parse
+          H = {"User-Agent": "galasmp-mods build"}
+          def get(u):
+              return urllib.request.urlopen(urllib.request.Request(u, headers=H), timeout=120).read()
+          info = []
+          for slug in ["watermedia", "watermedia-binaries", "watermedia-platform-extension", "watermedia-youtube-plugin", "waterframes", "videoplayer"]:
+              try:
+                  vs = json.loads(get(f"https://api.modrinth.com/v2/project/{slug}/version"))
+              except Exception as e:
+                  info.append(f"{slug}: {e}"); continue
+              for v in vs[:40]:
+                  info.append(f"{slug}\t{v['version_number']}\t{v['version_type']}\t{v['date_published'][:10]}\t{','.join(v['game_versions'][-6:])}\t{','.join(v['loaders'])}\t" + " ".join(f['filename'] + ':' + str(f['size']) for f in v['files']))
+              cand = [v for v in vs if '1.21.11' in v['game_versions'] and ('fabric' in v['loaders'])]
+              for v in cand[:1]:
+                  for f in v['files']:
+                      if f['size'] < 400_000_000:
+                          open('out/' + f['filename'], 'wb').write(get(f['url']))
+          open('out/versions.txt', 'w').write("\n".join(info))
+          PY
+          ls -la out
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: deps-watermedia
+          name: WaterMedia (nur zum Nachschauen)
+          prerelease: true
+          files: out/*
