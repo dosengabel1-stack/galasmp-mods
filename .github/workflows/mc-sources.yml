@@ -24,9 +24,10 @@ jobs:
       - name: Dateien einsammeln
         run: |
           mkdir -p out x
-          J=$(find ~/.gradle orderalert/.gradle -name "*minecraft*sources.jar" 2>/dev/null | grep -v fabric-api | head -1)
-          echo "Jar: $J"
-          cd x && unzip -q "$J" && cd ..
+          find ~/.gradle orderalert -name "*sources*.jar" 2>/dev/null | grep -iv "fabric-api\|fabric-loader" > jars.txt || true
+          echo "::notice::$(tr '\n' ' ' < jars.txt | cut -c1-900)"
+          for J in $(grep -i minecraft jars.txt); do (cd x && unzip -qo "$J"); done
+          echo "::notice::$(find x -name GlTexture.java)"
           for c in com/mojang/blaze3d/opengl/GlTexture com/mojang/blaze3d/opengl/GlTextureView com/mojang/blaze3d/opengl/GlDevice com/mojang/blaze3d/textures/GpuTexture com/mojang/blaze3d/textures/GpuTextureView \
                    net/minecraft/client/gui/GuiGraphics net/minecraft/client/gui/render/TextureSetup net/minecraft/client/gui/render/state/BlitRenderState \
                    com/mojang/blaze3d/systems/RenderSystem com/mojang/blaze3d/opengl/GlStateManager net/minecraft/client/renderer/texture/AbstractTexture \
