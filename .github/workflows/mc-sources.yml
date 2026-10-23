@@ -26,7 +26,7 @@ jobs:
           mkdir -p out x
           find ~/.gradle orderalert -name "*sources*.jar" 2>/dev/null | grep -iv "fabric-api\|fabric-loader" > jars.txt || true
           echo "::notice::$(tr '\n' ' ' < jars.txt | cut -c1-900)"
-          for J in $(grep -i minecraft jars.txt); do (cd x && unzip -qo "$J"); done
+          for J in $(grep -i minecraft jars.txt); do unzip -qo "$(realpath "$J")" -d x; done
           echo "::notice::$(find x -name GlTexture.java)"
           for c in com/mojang/blaze3d/opengl/GlTexture com/mojang/blaze3d/opengl/GlTextureView com/mojang/blaze3d/opengl/GlDevice com/mojang/blaze3d/textures/GpuTexture com/mojang/blaze3d/textures/GpuTextureView \
                    net/minecraft/client/gui/GuiGraphics net/minecraft/client/gui/render/TextureSetup net/minecraft/client/gui/render/state/BlitRenderState \
